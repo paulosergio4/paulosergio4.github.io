@@ -80,7 +80,8 @@ function resumo(m){
   return {total,parcelas,novos:total-parcelas,porCat,ls};
 }
 const mesesFechados = () => [...new Set(S.lanc.map(l=>ym(l.data)))].sort().filter(m=>m<ym(hoje())).slice(-3);
-function mediaDiaADia(){ const ms=mesesFechados(); return ms.length? ms.reduce((a,m)=>a+resumo(m).novos,0)/ms.length : 0; }
+// gastos marcados como "fora do normal" (viagem, show, festa) não entram na média da previsão
+function mediaDiaADia(){ const ms=mesesFechados(); return ms.length? ms.reduce((a,m)=>a+resumo(m).ls.filter(l=>!l.pt&&!l.fora_normal).reduce((x,l)=>x+l.valor,0),0)/ms.length : 0; }
 function basePlano(){ const ms=mesesFechados(), t=tetos();
   const fixos=ms.length? ms.reduce((a,m)=>a+doMes(m).filter(l=>!l.pt&&l.pilar==='Custos Fixos'&&!(l.cat in t)).reduce((x,l)=>x+l.valor,0),0)/ms.length : 0;
   return fixos+Object.values(t).reduce((a,v)=>a+(Number(v)||0),0); }
@@ -165,7 +166,7 @@ function rMes(){
 }
 
 function item(l){
-  const meta=`${esc(nomeCat(l.cat))} · ${esc(l.forma||'')}${l.pt?` · parcela ${l.pa}/${l.pt}`:''}${l.revisar?' · conferir':''}`;
+  const meta=`${esc(nomeCat(l.cat))} · ${esc(l.forma||'')}${l.pt?` · parcela ${l.pa}/${l.pt}`:''}${l.fora_normal?' · fora do normal':''}${l.revisar?' · conferir':''}`;
   return `<button class="item ${l.revisar?'rev':''}" data-edit="${esc(l.id)}"><span class="ic">${ICON[l.origem]||ICON.manual}</span><span class="d">${esc(l.desc)}</span><span class="v">${R(l.valor)}</span><span class="m">${meta}</span></button>`;
 }
 
@@ -218,7 +219,7 @@ function rFuturo(){
   V().innerHTML=`<div class="stack">
     <section class="card stack"><h2>Próximos 12 meses</h2>${grafico(pro,ren)}
       <div class="chips"><button type="button" class="chip" data-base="media" aria-pressed="${S.base==='media'}">Como venho gastando</button><button type="button" class="chip" data-base="plano" aria-pressed="${S.base==='plano'}">Seguindo os tetos</button></div>
-      <p class="small muted" style="margin:0">Cinza: parcelas que você já tem. Verde: dia a dia ${S.base==='plano'?'com as contas fixas e os tetos':'pela média dos últimos 3 meses'} (${R(baseDiaADia())} por mês). Vermelho quando passa do salário.</p>
+      <p class="small muted" style="margin:0">Cinza: parcelas que você já tem. Verde: dia a dia ${S.base==='plano'?'com as contas fixas e os tetos':'pela média dos últimos 3 meses, sem os gastos fora do normal'} (${R(baseDiaADia())} por mês). Vermelho quando passa do salário.</p>
       <div class="proj"><table><thead><tr><th>Mês</th><th>Parcelas</th><th>Dia a dia</th><th>Sobra</th></tr></thead><tbody>
       ${pro.map(p=>{const s=ren-p.total;return `<tr><td>${esc(nomeMes(p.m,true))}</td><td>${R(p.parcelas)}</td><td>${R(p.novos)}</td><td class="${s<0?'neg':'pos'}">${R(s)}</td></tr>`;}).join('')}</tbody></table></div></section>
     <section class="card stack"><h2>Posso comprar?</h2>
@@ -298,6 +299,7 @@ function editar(id){
       <div class="field"><label for="edt">Data</label><input id="edt" type="date" value="${esc(l.data)}"></div></div>
     <div class="grid2"><div class="field"><label for="ec">Categoria</label><select id="ec">${CATS.map(([c])=>`<option value="${esc(c)}" ${l.cat===c?'selected':''}>${esc(nomeCat(c))}</option>`).join('')}</select></div>
       <div class="field"><label for="ef">Pagamento</label><select id="ef">${FORMAS.map(f=>`<option ${l.forma===f?'selected':''}>${f}</option>`).join('')}</select></div></div>
+    ${l.pt?'':`<label class="row small" style="justify-content:flex-start;gap:8px"><input type="checkbox" id="efora" ${l.fora_normal?'checked':''}> Fora do normal (não se repete, não entra na previsão)</label>`}
     ${l.origem!=='manual'?`<label class="row small" style="justify-content:flex-start;gap:8px"><input type="checkbox" id="esempre"> Sempre colocar "${esc(l.desc.slice(0,30))}" nessa categoria</label>`:''}
     ${l.itens?.length?`<details><summary class="small muted">${l.itens.length} itens do cupom</summary><div class="small" style="margin-top:6px">${l.itens.map(i=>`<div class="row"><span>${esc(i.descricao)}</span><span class="num">${R(i.total)}</span></div>`).join('')}</div></details>`:''}
     ${l.pt?`<p class="small muted" style="margin:0">Parcela ${l.pa} de ${l.pt}. Mudar a categoria muda todas as ${irmaos.length} parcelas.</p>`:''}
@@ -310,7 +312,7 @@ function editar(id){
       const {error}=await sb.from('lancamentos').delete().in('id',irmaos.map(x=>x.id)); if(error){ toast('Não consegui excluir.'); del.disabled=false; return; } fecharFolha(); toast('Excluído'); recarregar(); };
     root.querySelector('#fed').onsubmit=async e=>{ e.preventDefault(); const v=numBR(root.querySelector('#ev').value); if(!(v>0)){ toast('Digite um valor maior que zero'); return; }
       const cat=root.querySelector('#ec').value;
-      const {error}=await sb.from('lancamentos').update({descricao:root.querySelector('#ed').value.trim()||l.desc,valor:r2(v),data:root.querySelector('#edt').value||l.data,cat,pilar:CAT[cat].pilar,forma:root.querySelector('#ef').value,revisar:false}).eq('id',l.id);
+      const {error}=await sb.from('lancamentos').update({descricao:root.querySelector('#ed').value.trim()||l.desc,valor:r2(v),data:root.querySelector('#edt').value||l.data,cat,pilar:CAT[cat].pilar,forma:root.querySelector('#ef').value,revisar:false,fora_normal:Boolean(root.querySelector('#efora')?.checked)}).eq('id',l.id);
       if(error){ toast('Não consegui salvar.'); return; }
       if(cat!==l.cat&&irmaos.length>1) await sb.from('lancamentos').update({cat,pilar:CAT[cat].pilar}).in('id',irmaos.filter(x=>x.id!==l.id).map(x=>x.id));
       if(root.querySelector('#esempre')?.checked) await sb.from('regras').insert({contem:l.desc.toLowerCase().slice(0,40),cat});
