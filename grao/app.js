@@ -174,6 +174,7 @@ function rLancar(){
   const n=S.novo, v=numBR(n.valor)||0;
   V().innerHTML=`<div class="stack">
     <button class="btn big" id="qr">${ICON.nfce}Ler o QR code do cupom fiscal</button>
+    <button class="btn ghost" id="qrlink" type="button">Colar o link do cupom ou digitar a chave</button>
     <form class="card stack" id="fnovo" autocomplete="off">
       <h2>Ou lance à mão</h2>
       <div class="field"><label for="nv">Valor ${n.parcelado?'total da compra':''}</label><input id="nv" class="money num" type="text" inputmode="decimal" placeholder="0,00" value="${esc(n.valor)}"></div>
@@ -186,7 +187,7 @@ function rLancar(){
       ${n.parcelado?`<div class="field"><label for="nn">Número de parcelas</label><input id="nn" type="number" min="2" max="48" value="${n.n}"><span class="small muted num" id="nninfo">${n.n} × ${R(v/(n.n||1))} por mês, a partir de ${esc(nomeMes(ym(n.data)))}</span></div>`:''}
       <button class="btn" type="submit">Salvar gasto</button>
     </form></div>`;
-  $('#qr').onclick=abrirCamera;
+  $('#qr').onclick=abrirCamera; $('#qrlink').onclick=()=>digitarChave();
 }
 
 function rExtrato(){
@@ -327,7 +328,7 @@ async function abrirCamera(){
   el.innerHTML=`<video playsinline muted></video><div class="mira"></div>
     <div class="camtools"><button type="button" class="camb" id="camzoom" hidden>Zoom 2x</button><button type="button" class="camb" id="camluz" hidden>Lanterna</button></div>
     <div class="bar"><p class="small muted" style="margin:0;text-align:center" id="camdica">Segure o celular a um palmo do cupom, com o QR dentro do quadro. Toque na tela para focar.</p>
-      <div class="grid2"><button class="btn" id="camfoto" type="button">Tirar foto</button><button class="btn ghost" id="camchave" type="button">Digitar a chave</button></div>
+      <div class="grid2"><button class="btn" id="camfoto" type="button">Tirar foto</button><button class="btn ghost" id="camchave" type="button">Colar link ou chave</button></div>
       <button class="btn ghost" id="camsai" type="button">Cancelar</button>
       <input type="file" accept="image/*" capture="environment" id="camarq" hidden></div>`;
   document.body.appendChild(el);
@@ -388,15 +389,22 @@ async function qrDaFoto(file){
   return null;
 }
 function digitarChave(){
-  abrirFolha(`<form class="stack" id="fch"><h2>Digitar a chave do cupom</h2>
-    <p class="small muted" style="margin:0">São os 44 números embaixo do QR code, em "Chave de acesso". Pode digitar com ou sem espaços.</p>
-    <div class="field"><label for="chv">Chave de acesso</label><input id="chv" type="text" inputmode="numeric" autocomplete="off" placeholder="3126 1100 0000 ..."></div>
-    <p class="small dim" id="chvn" style="margin:0">0 de 44 números</p>
+  abrirFolha(`<form class="stack" id="fch"><h2>Link ou chave do cupom</h2>
+    <p class="small muted" style="margin:0">Cole o link que o leitor de QR do teclado (ou outro app) mostrou. Ou digite os 44 números da "Chave de acesso", com ou sem espaços.</p>
+    <div class="field"><label for="chv">Link ou chave</label><textarea id="chv" rows="3" autocomplete="off" spellcheck="false" placeholder="https://portalsped.fazenda.mg.gov.br/... ou 3126 1125 ..."></textarea></div>
+    <div class="grid2"><button class="btn ghost" type="button" id="chvcolar">Colar</button><p class="small dim" id="chvn" style="margin:0;align-self:center"></p></div>
     <button class="btn" type="submit">Buscar cupom</button><button class="btn ghost" type="button" id="chvc">Cancelar</button></form>`, root=>{
     const i=root.querySelector('#chv'), n=root.querySelector('#chvn');
-    i.oninput=()=>{ n.textContent=`${i.value.replace(/\D/g,'').length} de 44 números`; };
+    const ler=()=>{ const t=i.value.trim(); if(/^https?:\/\//i.test(t)) return {qr:t, ok:/\d{44}/.test(t.replace(/\s/g,''))};
+      const c=t.replace(/\D/g,''); return {qr:c, ok:c.length===44, n:c.length}; };
+    const mostra=()=>{ const r=ler(); n.textContent = !i.value.trim()? '' : r.n===undefined? (r.ok?'Link do cupom reconhecido':'Esse link não tem a chave do cupom') : `${r.n} de 44 números`; };
+    i.oninput=mostra;
+    const col=root.querySelector('#chvcolar');
+    if(navigator.clipboard?.readText) col.onclick=async()=>{ try{ i.value=(await navigator.clipboard.readText()).trim(); mostra(); }catch{ toast('Segure no campo e escolha Colar.'); i.focus(); } };
+    else col.hidden=true;
     root.querySelector('#chvc').onclick=fecharFolha;
-    root.querySelector('#fch').onsubmit=e=>{ e.preventDefault(); const c=i.value.replace(/\D/g,''); if(c.length!==44){ toast('A chave tem 44 números.'); return; } fecharFolha(); lerCupom(c); };
+    root.querySelector('#fch').onsubmit=e=>{ e.preventDefault(); const r=ler();
+      if(!r.ok){ toast(r.n===undefined?'Esse link não é de um cupom fiscal.':'A chave tem 44 números.'); return; } fecharFolha(); lerCupom(r.qr); };
     setTimeout(()=>i.focus(),50);
   });
 }
