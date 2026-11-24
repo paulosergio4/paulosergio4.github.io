@@ -416,6 +416,7 @@ async function lerCupom(qr){
   const d=data, itens=d.itens||[], data_=d.data||hoje();
   abrirFolha(`<form class="stack" id="fcupom"><h2>Cupom fiscal</h2>
     ${d.aviso?`<p class="notice warn" style="margin:0">${esc(d.aviso)}</p>`:''}
+    ${!itens.length&&/^https:\/\/[^/]+\.gov\.br\//i.test(d.consulta||'')?`<a class="btn ghost" href="${esc(d.consulta)}" target="_blank" rel="noopener">Ver os itens no site da SEFAZ</a>`:''}
     <div class="field"><label for="cl">Loja</label><input id="cl" type="text" value="${esc(d.loja||('CNPJ '+d.cnpj))}"></div>
     <div class="grid2"><div class="field"><label for="cv">Total</label><input id="cv" class="num" type="text" inputmode="decimal" value="${d.total!=null?String(d.total).replace('.',','):''}" placeholder="0,00"></div>
       <div class="field"><label for="cd">Data</label><input id="cd" type="date" value="${esc(data_)}"></div></div>
