@@ -324,24 +324,81 @@ function editar(id){
 let cam=null;
 async function abrirCamera(){
   const el=document.createElement('div'); el.className='cam';
-  el.innerHTML=`<video playsinline muted></video><div class="mira"></div><div class="bar"><p class="small muted" style="margin:0;text-align:center">Aponte para o QR code do cupom. Ele lê sozinho.</p><button class="btn ghost" id="camsai" type="button">Cancelar</button></div>`;
+  el.innerHTML=`<video playsinline muted></video><div class="mira"></div>
+    <div class="camtools"><button type="button" class="camb" id="camzoom" hidden>Zoom 2x</button><button type="button" class="camb" id="camluz" hidden>Lanterna</button></div>
+    <div class="bar"><p class="small muted" style="margin:0;text-align:center" id="camdica">Segure o celular a um palmo do cupom, com o QR dentro do quadro. Toque na tela para focar.</p>
+      <div class="grid2"><button class="btn" id="camfoto" type="button">Tirar foto</button><button class="btn ghost" id="camchave" type="button">Digitar a chave</button></div>
+      <button class="btn ghost" id="camsai" type="button">Cancelar</button>
+      <input type="file" accept="image/*" capture="environment" id="camarq" hidden></div>`;
   document.body.appendChild(el);
-  const video=el.querySelector('video'); let parar=false, stream=null;
+  const video=el.querySelector('video'); let parar=false, stream=null, track=null;
   const fechar=()=>{ parar=true; stream?.getTracks().forEach(t=>t.stop()); el.remove(); cam=null; };
+  const achou=txt=>{ if(navigator.vibrate) navigator.vibrate(60); fechar(); lerCupom(txt); };
   cam={fechar}; el.querySelector('#camsai').onclick=fechar;
-  try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:1280}},audio:false}); }
-  catch{ fechar(); toast('Não consegui abrir a câmera. Libere a permissão do navegador.'); return; }
+  // foto pela câmera do próprio celular: foca melhor e tem resolução bem maior que o vídeo
+  const arq=el.querySelector('#camarq');
+  el.querySelector('#camfoto').onclick=()=>arq.click();
+  arq.onchange=async()=>{ const f=arq.files?.[0]; if(!f) return; const dica=el.querySelector('#camdica'); dica.textContent='Procurando o QR code na foto…';
+    const txt=await qrDaFoto(f); arq.value='';
+    if(txt) achou(txt); else dica.textContent='Não achei o QR code nessa foto. Tire de novo, com o QR inteiro, reto e sem reflexo.'; };
+  el.querySelector('#camchave').onclick=()=>{ fechar(); digitarChave(); };
+  try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},focusMode:{ideal:'continuous'}},audio:false}); }
+  catch{ el.querySelector('#camdica').textContent='Não consegui abrir a câmera ao vivo. Use "Tirar foto" ou libere a permissão do navegador.'; return; }
   video.srcObject=stream; await video.play().catch(()=>{});
-  const det=('BarcodeDetector' in window)? await (async()=>{ try{ const f=await BarcodeDetector.getSupportedFormats(); return f.includes('qr_code')? new BarcodeDetector({formats:['qr_code']}) : null; }catch{ return null; } })() : null;
+  track=stream.getVideoTracks()[0];
+  const cap=track?.getCapabilities?.()||{};
+  try{ if(cap.focusMode?.includes('continuous')) await track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch{}
+  // zoom deixa segurar o celular mais longe, onde a câmera consegue focar
+  if(cap.zoom&&cap.zoom.max>=2){ const zb=el.querySelector('#camzoom'); let z=false; zb.hidden=false;
+    zb.onclick=async()=>{ z=!z; try{ await track.applyConstraints({advanced:[{zoom:z?Math.min(2,cap.zoom.max):cap.zoom.min||1}]}); zb.setAttribute('aria-pressed',z); zb.textContent=z?'Zoom 1x':'Zoom 2x'; }catch{} }; }
+  if(cap.torch){ const lb=el.querySelector('#camluz'); let on=false; lb.hidden=false;
+    lb.onclick=async()=>{ on=!on; try{ await track.applyConstraints({advanced:[{torch:on}]}); lb.setAttribute('aria-pressed',on); }catch{} }; }
+  video.onclick=async()=>{ try{ if(cap.focusMode?.includes('single-shot')){ await track.applyConstraints({advanced:[{focusMode:'single-shot'}]}); setTimeout(()=>track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{}),1500); } }catch{} };
+  const det=await detectorQR();
   const cv=document.createElement('canvas'), cx=cv.getContext('2d',{willReadFrequently:true});
+  let volta=0;
   const tick=async()=>{ if(parar) return; let txt=null;
     try{ if(video.readyState>=2){
       if(det){ const r=await det.detect(video); if(r[0]) txt=r[0].rawValue; }
-      else if(window.jsQR){ const w=video.videoWidth, h=video.videoHeight, s=Math.min(w,h)*.8, k=Math.min(1,640/s); cv.width=s*k; cv.height=s*k;
-        cx.drawImage(video,(w-s)/2,(h-s)/2,s,s,0,0,cv.width,cv.height); const im=cx.getImageData(0,0,cv.width,cv.height); const r=jsQR(im.data,im.width,im.height); if(r) txt=r.data; } } }catch{}
-    if(txt){ if(navigator.vibrate) navigator.vibrate(60); fechar(); lerCupom(txt); return; }
-    setTimeout(tick, det?120:200); };
+      if(!txt&&window.jsQR){ // QR do cupom é denso: lê o centro em resolução alta, alternando dois recortes
+        const w=video.videoWidth, h=video.videoHeight, s=Math.min(w,h)*(volta++%2?.95:.7), k=Math.min(1,1000/s);
+        cv.width=Math.round(s*k); cv.height=Math.round(s*k);
+        cx.drawImage(video,(w-s)/2,(h-s)/2,s,s,0,0,cv.width,cv.height); const im=cx.getImageData(0,0,cv.width,cv.height);
+        const r=jsQR(im.data,im.width,im.height,{inversionAttempts:'dontInvert'}); if(r) txt=r.data; } } }catch{}
+    if(txt){ achou(txt); return; }
+    setTimeout(tick, det?120:250); };
   tick();
+}
+async function detectorQR(){
+  if(!('BarcodeDetector' in window)) return null;
+  try{ const f=await BarcodeDetector.getSupportedFormats(); return f.includes('qr_code')? new BarcodeDetector({formats:['qr_code']}) : null; }catch{ return null; }
+}
+// lê o QR de uma foto tentando vários tamanhos e recortes (foto de celular é grande e o QR pode estar pequeno)
+async function qrDaFoto(file){
+  let img; try{ img=await createImageBitmap(file); }catch{ return null; }
+  const det=await detectorQR();
+  if(det){ try{ const r=await det.detect(img); if(r[0]) return r[0].rawValue; }catch{} }
+  if(!window.jsQR) return null;
+  const cv=document.createElement('canvas'), cx=cv.getContext('2d',{willReadFrequently:true});
+  const W=img.width, H=img.height;
+  const tentativas=[[0,0,W,H,1600],[0,0,W,H,1000],[W*.15,H*.15,W*.7,H*.7,1400],[W*.25,H*.25,W*.5,H*.5,1600],[W*.32,H*.32,W*.36,H*.36,1600]];
+  for(const [x,y,w,h,max] of tentativas){ const k=Math.min(1,max/Math.max(w,h)); cv.width=Math.round(w*k); cv.height=Math.round(h*k);
+    cx.drawImage(img,x,y,w,h,0,0,cv.width,cv.height); const im=cx.getImageData(0,0,cv.width,cv.height);
+    const r=jsQR(im.data,im.width,im.height,{inversionAttempts:'attemptBoth'}); if(r) return r.data; }
+  return null;
+}
+function digitarChave(){
+  abrirFolha(`<form class="stack" id="fch"><h2>Digitar a chave do cupom</h2>
+    <p class="small muted" style="margin:0">São os 44 números embaixo do QR code, em "Chave de acesso". Pode digitar com ou sem espaços.</p>
+    <div class="field"><label for="chv">Chave de acesso</label><input id="chv" type="text" inputmode="numeric" autocomplete="off" placeholder="3126 1100 0000 ..."></div>
+    <p class="small dim" id="chvn" style="margin:0">0 de 44 números</p>
+    <button class="btn" type="submit">Buscar cupom</button><button class="btn ghost" type="button" id="chvc">Cancelar</button></form>`, root=>{
+    const i=root.querySelector('#chv'), n=root.querySelector('#chvn');
+    i.oninput=()=>{ n.textContent=`${i.value.replace(/\D/g,'').length} de 44 números`; };
+    root.querySelector('#chvc').onclick=fecharFolha;
+    root.querySelector('#fch').onsubmit=e=>{ e.preventDefault(); const c=i.value.replace(/\D/g,''); if(c.length!==44){ toast('A chave tem 44 números.'); return; } fecharFolha(); lerCupom(c); };
+    setTimeout(()=>i.focus(),50);
+  });
 }
 async function lerCupom(qr){
   abrirFolha(`<div class="stack"><h2>Lendo o cupom na SEFAZ…</h2><p class="muted small" style="margin:0">Leva alguns segundos.</p></div>`);
